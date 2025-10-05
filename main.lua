@@ -1,206 +1,272 @@
--- 三人称向けエイムサポートUI（スマホ / PC 両対応・合法）
--- Place this file as a LocalScript under StarterPlayerScripts or StarterGui (LocalScript)
--- 何もしない自動射撃等は含まれていません。UI表示＆ハイライトのみ。
+-- TPS Aim Support 完全版（スマホ/PC 両対応・合法表示のみ）
+-- LocalScriptとして StarterPlayerScripts または StarterGui -> PlayerGui 内で動かす
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
 
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+local playerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- 設定（必要ならここを編集）
-local HIGHLIGHT_FILL_TRANSPARENCY = 0.7
+-- ======= 設定 =======
+local MAX_HIGHLIGHT_DISTANCE = 300           -- ハイライト判定距離
+local AIM_RADIUS_PIXELS = 80                 -- 画面中心から何ピクセル以内を「狙えてる」と判定するか
+local UPDATE_INTERVAL = 0.03                 -- ESP/判定の更新間隔（秒）
+local USE_RAYCAST_FOR_VISIBILITY = true      -- 壁越し非表示にしたいなら true（負荷注意）
+local HIGHLIGHT_FILL_TRANSPARENCY = 0.75
 local HIGHLIGHT_OUTLINE_TRANSPARENCY = 0
-local MAX_HIGHLIGHT_DISTANCE = 200  -- ハイライトする最大距離（stud）
-local SHOW_DISTANCE_TEXT = false    -- 名前の横に距離を表示するか
 
--- UI 作成
+-- ======= UI 構築 =======
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "TPS_AimSupport_UI"
+screenGui.Name = "TPS_AimSupport_Full"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = playerGui
 
--- メインフレーム（ドラッグ可能）
-local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 1, 0, 1) -- 最小化用の invisible holder（位置は個別要素で管理）
-mainFrame.Position = UDim2.new(0.5, -200, 0.03, 0) -- 初期位置（画面上部中央）
-mainFrame.BackgroundTransparency = 1
-mainFrame.Active = true
-mainFrame.Parent = screenGui
+-- メインコンテナ（UIの移動はここを動かす）
+local uiContainer = Instance.new("Frame")
+uiContainer.Name = "UIContainer"
+uiContainer.Size = UDim2.new(0, 360, 0, 180)
+uiContainer.Position = UDim2.new(0.5, -180, 0.04, 0)
+uiContainer.AnchorPoint = Vector2.new(0.5, 0)
+uiContainer.BackgroundTransparency = 1
+uiContainer.Parent = screenGui
+uiContainer.Active = true
 
--- クロスヘア用フォルダ（中央に表示）
-local crossFolder = Instance.new("Frame")
-crossFolder.Name = "CrossFolder"
-crossFolder.Size = UDim2.new(0, 0, 0, 0)
-crossFolder.Position = UDim2.new(0.5, 0, 0.5, 0)
-crossFolder.AnchorPoint = Vector2.new(0.5, 0.5)
-crossFolder.BackgroundTransparency = 1
-crossFolder.Parent = mainFrame
-
--- 外側の虹色呼吸円
-local circle = Instance.new("Frame")
-circle.Name = "RainbowCircle"
-circle.Size = UDim2.new(0, 120, 0, 120) -- スマホは後で補正
-circle.AnchorPoint = Vector2.new(0.5, 0.5)
-circle.Position = UDim2.new(0.5, 0, 0.5, 0)
-circle.BackgroundTransparency = 1
-circle.Parent = crossFolder
-
-local circleUICorner = Instance.new("UICorner", circle)
-circleUICorner.CornerRadius = UDim.new(1, 0)
-
-local circleStroke = Instance.new("UIStroke", circle)
-circleStroke.Thickness = 4
-
--- 内側の白十字（小）
-local crossCenter = Instance.new("Frame")
-crossCenter.Name = "CrossCenter"
-crossCenter.Size = UDim2.new(0, 12, 0, 12)
-crossCenter.Position = UDim2.new(0.5, 0, 0.5, 0)
-crossCenter.AnchorPoint = Vector2.new(0.5, 0.5)
-crossCenter.BackgroundColor3 = Color3.new(1,1,1)
-crossCenter.Parent = circle
-
-local crossThinH = Instance.new("Frame", crossCenter)
-crossThinH.Name = "H"
-crossThinH.Size = UDim2.new(1.6, 0, 0, 2)
-crossThinH.Position = UDim2.new(-0.3, 0, 0.5, -1)
-crossThinH.BackgroundColor3 = Color3.new(1,1,1)
-
-local crossThinV = Instance.new("Frame", crossCenter)
-crossThinV.Name = "V"
-crossThinV.Size = UDim2.new(0, 2, 1.6, 0)
-crossThinV.Position = UDim2.new(0.5, -1, -0.3, 0)
-crossThinV.BackgroundColor3 = Color3.new(1,1,1)
-
--- 設定パネル（最小限のトグル）
-local panel = Instance.new("Frame")
-panel.Name = "ControlPanel"
+-- 背景パネル（設定等）
+local panel = Instance.new("Frame", uiContainer)
+panel.Name = "Panel"
 panel.Size = UDim2.new(0, 220, 0, 140)
-panel.Position = UDim2.new(-0.5, -110, 0, -80) -- mainFrameの基準からオフセット
-panel.AnchorPoint = Vector2.new(0.5, 0)
-panel.BackgroundColor3 = Color3.fromRGB(28,28,28)
+panel.Position = UDim2.new(0, 8, 0, 8)
+panel.BackgroundColor3 = Color3.fromRGB(25,25,25)
 panel.BorderSizePixel = 0
-panel.Parent = mainFrame
+panel.Visible = true
 
-local panelTitle = Instance.new("TextLabel")
-panelTitle.Parent = panel
-panelTitle.Size = UDim2.new(1, 0, 0, 28)
-panelTitle.BackgroundTransparency = 1
-panelTitle.Text = "Aim Support"
-panelTitle.TextColor3 = Color3.new(1,1,1)
-panelTitle.Font = Enum.Font.GothamBold
-panelTitle.TextSize = 16
-panelTitle.Position = UDim2.new(0,0,0,6)
+local title = Instance.new("TextLabel", panel)
+title.Size = UDim2.new(1, 0, 0, 28)
+title.Position = UDim2.new(0, 0, 0, 4)
+title.BackgroundTransparency = 1
+title.Text = "Aim Support"
+title.TextColor3 = Color3.new(1,1,1)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 16
 
--- トグル作成ヘルパー
-local function makeToggle(labelText, initial, yOffset)
-	local btn = Instance.new("TextButton")
-	btn.Parent = panel
-	btn.Size = UDim2.new(0, 100, 0, 28)
-	btn.Position = UDim2.new(0, 10 + (yOffset or 0), 0, 30 + (yOffset or 0))
-	btn.Text = (initial and "ON " or "OFF ") .. labelText
-	btn.BackgroundColor3 = initial and Color3.fromRGB(45,150,45) or Color3.fromRGB(80,80,80)
-	btn.TextColor3 = Color3.new(1,1,1)
-	btn.Font = Enum.Font.SourceSans
+-- 閉じる・最小化ボタン
+local btnClose = Instance.new("TextButton", uiContainer)
+btnClose.Size = UDim2.new(0, 28, 0, 28)
+btnClose.Position = UDim2.new(1, -36, 0, 6)
+btnClose.Text = "❌"
+btnClose.Font = Enum.Font.Gotham
+btnClose.TextSize = 18
+btnClose.BackgroundColor3 = Color3.fromRGB(190,60,60)
+btnClose.TextColor3 = Color3.new(1,1,1)
+
+local btnMin = Instance.new("TextButton", uiContainer)
+btnMin.Size = UDim2.new(0, 28, 0, 28)
+btnMin.Position = UDim2.new(1, -72, 0, 6)
+btnMin.Text = "—"
+btnMin.Font = Enum.Font.Gotham
+btnMin.TextSize = 18
+btnMin.BackgroundColor3 = Color3.fromRGB(130,130,130)
+btnMin.TextColor3 = Color3.new(1,1,1)
+
+-- ミニモード用ボタン（最小化時に表示）
+local miniOpenBtn
+local function createMiniOpen()
+	if miniOpenBtn and miniOpenBtn.Parent then return end
+	miniOpenBtn = Instance.new("TextButton", screenGui)
+	miniOpenBtn.Size = UDim2.new(0, 60, 0, 30)
+	miniOpenBtn.Position = UDim2.new(0.5, -30, 0, 6)
+	miniOpenBtn.AnchorPoint = Vector2.new(0.5, 0)
+	miniOpenBtn.Text = "開く"
+	miniOpenBtn.Font = Enum.Font.Gotham
+	miniOpenBtn.TextSize = 14
+	miniOpenBtn.BackgroundColor3 = Color3.fromRGB(40,40,40)
+	miniOpenBtn.TextColor3 = Color3.new(1,1,1)
+	miniOpenBtn.Activated:Connect(function()
+		miniOpenBtn:Destroy()
+		miniOpenBtn = nil
+		uiContainer.Visible = true
+	end)
+end
+
+btnClose.Activated:Connect(function()
+	screenGui:Destroy()
+end)
+
+btnMin.Activated:Connect(function()
+	uiContainer.Visible = false
+	createMiniOpen()
+end)
+
+-- ======= クロスヘア（画面中央固定） =======
+-- クロスヘア自体は screenGui 直下に置いて中央に固定する（UIContainerとは別）
+local crossRoot = Instance.new("Frame", screenGui)
+crossRoot.Name = "CrossRoot"
+crossRoot.Size = UDim2.new(0, 0, 0, 0) -- 見た目は子で制御
+crossRoot.AnchorPoint = Vector2.new(0.5, 0.5)
+crossRoot.Position = UDim2.new(0.5, 0, 0.5, 0)
+crossRoot.BackgroundTransparency = 1
+crossRoot.ZIndex = 2
+
+-- 外側虹色円
+local rainbow = Instance.new("Frame", crossRoot)
+rainbow.Name = "RainbowCircle"
+rainbow.Size = UDim2.new(0, 160, 0, 160)
+rainbow.AnchorPoint = Vector2.new(0.5,0.5)
+rainbow.Position = UDim2.new(0.5, 0, 0.5, 0)
+rainbow.BackgroundTransparency = 1
+
+local rainbowCorner = Instance.new("UICorner", rainbow)
+rainbowCorner.CornerRadius = UDim.new(1,0)
+
+local rainbowStroke = Instance.new("UIStroke", rainbow)
+rainbowStroke.Thickness = 5
+
+-- 内側十字
+local cross = Instance.new("Frame", crossRoot)
+cross.Name = "Cross"
+cross.Size = UDim2.new(0, 18, 0, 18)
+cross.AnchorPoint = Vector2.new(0.5,0.5)
+cross.Position = UDim2.new(0.5,0,0.5,0)
+cross.BackgroundTransparency = 1
+
+local barH = Instance.new("Frame", cross)
+barH.Size = UDim2.new(1.6, 0, 0, 2)
+barH.Position = UDim2.new(-0.3,0,0.5,-1)
+barH.BackgroundColor3 = Color3.new(1,1,1)
+
+local barV = Instance.new("Frame", cross)
+barV.Size = UDim2.new(0, 2, 1.6, 0)
+barV.Position = UDim2.new(0.5,-1,-0.3,0)
+barV.BackgroundColor3 = Color3.new(1,1,1)
+
+-- 狙えてるときの外側リング色（ターゲット接近時に色変化）
+local aimOn = false
+
+-- ======= ドラッグ機能（UIContainer と クロスを動かすオプション） =======
+local draggable = true
+do
+	local dragging = false
+	local dragTarget -- frame to drag (uiContainer or crossRoot)
+	local dragStartPos
+	local dragStartMouse
+
+	-- 汎用開始/更新/終了
+	local function onInputBegan(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			local mousePos = input.Position
+			-- UIContainer上をクリックでコンテナ移動、クロス直下（領域）をドラッグでクロス移動
+			local absPos = uiContainer.AbsolutePosition
+			local absSize = uiContainer.AbsoluteSize
+			local crossPos = crossRoot.AbsolutePosition
+			local crossSize = crossRoot.AbsoluteSize
+
+			-- 判定：押下位置がクロス近辺（半径200px以内）ならクロスをドラッグ、そうでなければパネルをドラッグ
+			local centerScreen = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+			local distToCenter = (Vector2.new(mousePos.X, mousePos.Y) - centerScreen).Magnitude
+
+			if draggable then
+				dragging = true
+				dragStartMouse = mousePos
+				if distToCenter <= 220 then
+					dragTarget = "cross"
+					dragStartPos = crossRoot.Position
+				else
+					dragTarget = "panel"
+					dragStartPos = uiContainer.Position
+				end
+				input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then
+						dragging = false
+					end
+				end)
+			end
+		end
+	end
+
+	local function onInputChanged(input)
+		if not dragging or not dragTarget then return end
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			local delta = input.Position - dragStartMouse
+			if dragTarget == "panel" then
+				uiContainer.Position = UDim2.new(
+					dragStartPos.X.Scale, dragStartPos.X.Offset + delta.X,
+					dragStartPos.Y.Scale, dragStartPos.Y.Offset + delta.Y
+				)
+			elseif dragTarget == "cross" then
+				-- クロスは画面上の絶対座標で位置をずらす（pxベース）
+				local newX = Camera.ViewportSize.X * 0.5 + delta.X
+				local newY = Camera.ViewportSize.Y * 0.5 + delta.Y
+				crossRoot.Position = UDim2.new(0, newX, 0, newY)
+				crossRoot.AnchorPoint = Vector2.new(0,0) -- 絶対位置扱いにする
+			end
+		end
+	end
+
+	uiContainer.InputBegan:Connect(onInputBegan)
+	crossRoot.InputBegan:Connect(onInputBegan)
+	UserInputService.InputChanged:Connect(onInputChanged)
+end
+
+-- ======= トグルスイッチ群 =======
+local function makeToggle(parent, text, init, posY)
+	local btn = Instance.new("TextButton", parent)
+	btn.Size = UDim2.new(0, 96, 0, 28)
+	btn.Position = UDim2.new(0, 8 + (posY or 0), 0, 34 + (posY or 0))
+	btn.Text = (init and "ON " or "OFF ") .. text
+	btn.Font = Enum.Font.Gotham
 	btn.TextSize = 14
-
+	btn.TextColor3 = Color3.new(1,1,1)
+	btn.BackgroundColor3 = init and Color3.fromRGB(50,160,50) or Color3.fromRGB(90,90,90)
 	return btn
 end
 
--- トグル変数
 local espEnabled = true
 local crossEnabled = true
-local circleEnabled = true
-local draggableEnabled = true
+local rainbowEnabled = true
+local guideEnabled = true
 
-local espToggle = makeToggle("ESP", espEnabled, 0)
-local crossToggle = makeToggle("十字", crossEnabled, 38)
-local circleToggle = makeToggle("虹丸", circleEnabled, 76)
+local espBtn = makeToggle(panel, "ESP", espEnabled, 0)
+local crossBtn = makeToggle(panel, "十字", crossEnabled, 36)
+local rainbowBtn = makeToggle(panel, "虹丸", rainbowEnabled, 72)
+local guideBtn = makeToggle(panel, "ガイド表示", guideEnabled, 108)
 
-espToggle.MouseButton1Click:Connect(function()
+espBtn.Activated:Connect(function()
 	espEnabled = not espEnabled
-	espToggle.Text = (espEnabled and "ON " or "OFF ") .. "ESP"
-	espToggle.BackgroundColor3 = espEnabled and Color3.fromRGB(45,150,45) or Color3.fromRGB(80,80,80)
+	espBtn.Text = (espEnabled and "ON " or "OFF ") .. "ESP"
+	espBtn.BackgroundColor3 = espEnabled and Color3.fromRGB(50,160,50) or Color3.fromRGB(90,90,90)
 end)
-
-crossToggle.MouseButton1Click:Connect(function()
+crossBtn.Activated:Connect(function()
 	crossEnabled = not crossEnabled
-	crossToggle.Text = (crossEnabled and "ON " or "OFF ") .. "十字"
-	crossToggle.BackgroundColor3 = crossEnabled and Color3.fromRGB(45,150,45) or Color3.fromRGB(80,80,80)
-	crossCenter.Visible = crossEnabled
+	crossBtn.Text = (crossEnabled and "ON " or "OFF ") .. "十字"
+	crossBtn.BackgroundColor3 = crossEnabled and Color3.fromRGB(50,160,50) or Color3.fromRGB(90,90,90)
+	cross.Visible = crossEnabled
+end)
+rainbowBtn.Activated:Connect(function()
+	rainbowEnabled = not rainbowEnabled
+	rainbowBtn.Text = (rainbowEnabled and "ON " or "OFF ") .. "虹丸"
+	rainbowBtn.BackgroundColor3 = rainbowEnabled and Color3.fromRGB(50,160,50) or Color3.fromRGB(90,90,90)
+	rainbow.Visible = rainbowEnabled
+end)
+guideBtn.Activated:Connect(function()
+	guideEnabled = not guideEnabled
+	guideBtn.Text = (guideEnabled and "ON " or "OFF ") .. "ガイド表示"
+	guideBtn.BackgroundColor3 = guideEnabled and Color3.fromRGB(50,160,50) or Color3.fromRGB(90,90,90)
 end)
 
-circleToggle.MouseButton1Click:Connect(function()
-	circleEnabled = not circleEnabled
-	circleToggle.Text = (circleEnabled and "ON " or "OFF ") .. "虹丸"
-	circleToggle.BackgroundColor3 = circleEnabled and Color3.fromRGB(45,150,45) or Color3.fromRGB(80,80,80)
-	circle.Visible = circleEnabled
-end)
+-- ======= ハイライト管理 =======
+local activeHighlights = {}
 
--- スマホ判定＆サイズ補正
-local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-if isMobile then
-	-- スマホは円を少し小さめにして画面上に寄せる
-	circle.Size = UDim2.new(0, 100, 0, 100)
-	mainFrame.Position = UDim2.new(0.5, -110, 0.45, -50)
-	panel.Position = UDim2.new(-0.5, -110, 0, -110)
-else
-	-- PC向け
-	circle.Size = UDim2.new(0, 140, 0, 140)
-	mainFrame.Position = UDim2.new(0.5, -200, 0.03, 0)
-end
-
--- ドラッグ機能（フレーム全体をドラッグ）
-do
-	local dragging = false
-	local dragStart
-	local startPos
-
-	local function beginDrag(input)
-		if not draggableEnabled then return end
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = true
-			dragStart = input.Position
-			startPos = mainFrame.Position
-			input.Changed:Connect(function()
-				if input.UserInputState == Enum.UserInputState.End then
-					dragging = false
-				end
-			end)
-		end
-	end
-
-	local function updateDrag(input)
-		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement or (input.UserInputType == Enum.UserInputType.Touch and dragging) then
-			local delta = input.Position - dragStart
-			mainFrame.Position = UDim2.new(
-				startPos.X.Scale,
-				startPos.X.Offset + delta.X,
-				startPos.Y.Scale,
-				startPos.Y.Offset + delta.Y
-			)
-		end
-	end
-
-	mainFrame.InputBegan:Connect(beginDrag)
-	UserInputService.InputChanged:Connect(updateDrag)
-end
-
--- ハイライト管理
-local activeHighlights = {} -- player -> highlight instance
-
-local function clearHighlightForPlayer(targetPlayer)
-	local h = activeHighlights[targetPlayer]
+local function clearHighlight(pl)
+	local h = activeHighlights[pl]
 	if h and h.Parent then
 		h:Destroy()
 	end
-	activeHighlights[targetPlayer] = nil
+	activeHighlights[pl] = nil
 end
 
-local function ensureHighlightForCharacter(char, color)
+local function ensureHighlight(char, color)
 	if not char or not char.Parent then return nil end
 	local existing = char:FindFirstChild("TPS_Aim_Highlight")
 	if existing and existing:IsA("Highlight") then
@@ -208,178 +274,180 @@ local function ensureHighlightForCharacter(char, color)
 		existing.OutlineColor = color
 		return existing
 	else
-		-- 既存がなければ作る
 		if existing then existing:Destroy() end
-		local highlight = Instance.new("Highlight")
-		highlight.Name = "TPS_Aim_Highlight"
-		highlight.FillColor = color
-		highlight.OutlineColor = color
-		highlight.FillTransparency = HIGHLIGHT_FILL_TRANSPARENCY
-		highlight.OutlineTransparency = HIGHLIGHT_OUTLINE_TRANSPARENCY
-		highlight.Parent = char
-		return highlight
+		local h = Instance.new("Highlight")
+		h.Name = "TPS_Aim_Highlight"
+		h.FillColor = color
+		h.OutlineColor = color
+		h.FillTransparency = HIGHLIGHT_FILL_TRANSPARENCY
+		h.OutlineTransparency = HIGHLIGHT_OUTLINE_TRANSPARENCY
+		h.Parent = char
+		return h
 	end
 end
 
--- チーム判定ヘルパー
 local function hasTeams()
-	-- 単純チェック：プレイヤーいずれかにTeamが非 nil かつチーム数>0
-	local anyTeam = false
 	for _, pl in ipairs(Players:GetPlayers()) do
 		if pl.Team and pl.Team.Name ~= "" then
-			anyTeam = true
-			break
+			return true
 		end
 	end
-	return anyTeam
+	return false
 end
 
 local function isEnemy(pl)
-	-- チームがない場合は全員敵扱い（FFA）
 	if not hasTeams() then
 		return true
 	end
-	-- プレイヤーに Team がなければ敵扱い
-	if not pl.Team or not player.Team then
+	if not pl.Team or not LocalPlayer.Team then
 		return true
 	end
-	return pl.Team ~= player.Team
+	return pl.Team ~= LocalPlayer.Team
 end
 
--- プレイヤー一覧を走査してハイライト更新
-local function updateESP()
-	if not espEnabled then
-		-- 全消し
-		for pl, _ in pairs(activeHighlights) do
-			clearHighlightForPlayer(pl)
-		end
-		return
-	end
+-- ======= 画面中心との距離を使った「狙えてる」判定 =======
+local function getClosestToCenter()
+	local cam = Camera
+	if not cam then return nil end
+	local vs = cam.ViewportSize
+	local center = Vector2.new(vs.X/2, vs.Y/2)
 
-	local localChar = player.Character
-	local cam = workspace.CurrentCamera
-	local camPos = cam and cam.CFrame and cam.CFrame.Position or nil
-
+	local best = nil
+	local bestDist = math.huge
+	local bestOnScreen = false
 	for _, pl in ipairs(Players:GetPlayers()) do
-		if pl ~= player and pl.Character and pl.Character.Parent then
+		if pl ~= LocalPlayer and pl.Character and pl.Character.Parent then
 			local hrp = pl.Character:FindFirstChild("HumanoidRootPart")
 			local humanoid = pl.Character:FindFirstChildOfClass("Humanoid")
 			if hrp and humanoid and humanoid.Health > 0 then
+				local screenPos, onScreen = cam:WorldToViewportPoint(hrp.Position)
+				local screenV = Vector2.new(screenPos.X, screenPos.Y)
+				local dist = (screenV - center).Magnitude
 				-- 距離制限
-				local dist = camPos and (hrp.Position - camPos).Magnitude or 0
-				if dist <= MAX_HIGHLIGHT_DISTANCE then
-					-- 壁越しでも見えるようにするかどうかはオプションだが今回は単純に距離基準のみ
-					local color = isEnemy(pl) and Color3.new(1,0,0) or Color3.new(0,1,0)
-					local h = ensureHighlightForCharacter(pl.Character, color)
-					activeHighlights[pl] = h
-
-					-- 名前表示（任意）
-					if SHOW_DISTANCE_TEXT then
-						local bill = pl.Character:FindFirstChild("TPS_Aim_NameBillboard")
-						if not bill then
-							local bb = Instance.new("BillboardGui")
-							bb.Name = "TPS_Aim_NameBillboard"
-							bb.Adornee = hrp
-							bb.Size = UDim2.new(0, 120, 0, 30)
-							bb.AlwaysOnTop = true
-							bb.Parent = pl.Character
-
-							local lbl = Instance.new("TextLabel", bb)
-							lbl.Size = UDim2.new(1, 1, 1, 0)
-							lbl.BackgroundTransparency = 1
-							lbl.TextColor3 = Color3.new(1,1,1)
-							lbl.Font = Enum.Font.Gotham
-							lbl.TextSize = 14
-						end
-						local bb = pl.Character:FindFirstChild("TPS_Aim_NameBillboard")
-						if bb and bb:FindFirstChildOfClass("TextLabel") then
-							bb.TextLabel.Text = pl.Name .. " <" .. math.floor(dist) .. ">"
+				local worldDist = (hrp.Position - cam.CFrame.Position).Magnitude
+				if worldDist <= MAX_HIGHLIGHT_DISTANCE then
+					-- 可視性チェック（任意）
+					local visible = true
+					if USE_RAYCAST_FOR_VISIBILITY then
+						local ray = Ray.new(cam.CFrame.Position, (hrp.Position - cam.CFrame.Position).Unit * math.min(1000, worldDist))
+						local hitPart = workspace:FindPartOnRayWithIgnoreList(ray, {LocalPlayer.Character}, false, true)
+						if hitPart and not hitPart:IsDescendantOf(pl.Character) then
+							visible = false
 						end
 					end
-				else
-					clearHighlightForPlayer(pl)
-					local bill = pl.Character:FindFirstChild("TPS_Aim_NameBillboard")
-					if bill then bill:Destroy() end
+
+					if onScreen and visible then
+						if dist < bestDist then
+							bestDist = dist
+							best = {player = pl, distPixels = dist, worldDist = worldDist, screenPos = screenV}
+						end
+					end
 				end
-			else
-				clearHighlightForPlayer(pl)
-				local bill = pl.Character and pl.Character:FindFirstChild("TPS_Aim_NameBillboard")
-				if bill then bill:Destroy() end
 			end
-		else
-			-- 自分 or 無効キャラ
-			if activeHighlights[pl] then clearHighlightForPlayer(pl) end
 		end
 	end
+	return best
 end
 
--- プレイヤー離脱・キャラ消滅時のクリーンアップ
-Players.PlayerRemoving:Connect(function(pl)
-	clearHighlightForPlayer(pl)
-end)
-
-Players.PlayerAdded:Connect(function(pl)
-	-- 新しいプレイヤーのための初期化は特に不要（updateESP が対応）
-end)
-
--- レンダーステップで虹色＆呼吸アニメ・ESP 更新
-local startTick = tick()
-RunService.RenderStepped:Connect(function()
-	-- 虹色円のアニメーション（HSV -> RGB）
-	if circleEnabled and circle.Visible then
-		local hue = (tick() * 0.15) % 1
-		local r,g,b = Color3.fromHSV(hue, 1, 1):ToRGB()
-		-- UIStroke は Color3 を受け取るので直接代入
-		circleStroke.Color = Color3.fromRGB(math.floor(r*255), math.floor(g*255), math.floor(b*255))
-		-- 呼吸（拡大縮小）
+-- ======= 定期更新 =======
+local lastUpdate = 0
+RunService.RenderStepped:Connect(function(dt)
+	-- 虹色アニメ
+	if rainbowEnabled and rainbow and rainbowStroke then
+		local hue = (tick() * 0.12) % 1
+		rainbowStroke.Color = Color3.fromHSV(hue, 1, 1)
+		local base = UserInputService.TouchEnabled and 100 or 160
 		local scale = 1 + 0.05 * math.sin(tick() * 2)
-		local baseSize = isMobile and 100 or 140
-		local s = math.clamp(baseSize * scale, 60, 200)
-		circle.Size = UDim2.new(0, s, 0, s)
+		local size = math.clamp(base * scale, 60, 240)
+		rainbow.Size = UDim2.new(0, size, 0, size)
+		-- もし crossRoot が anchor(0,0) になってたら位置補正しないとズレるが、通常は中央
 	end
 
-	-- ESP 更新（毎フレームだと重いなら間引きも検討）
-	updateESP()
+	lastUpdate = lastUpdate + dt
+	if lastUpdate < UPDATE_INTERVAL then return end
+	lastUpdate = 0
+
+	-- ESP 更新
+	if espEnabled then
+		-- 既存を維持しつつ更新
+		local seen = {}
+		for _, pl in ipairs(Players:GetPlayers()) do
+			if pl ~= LocalPlayer and pl.Character and pl.Character.Parent then
+				local hrp = pl.Character:FindFirstChild("HumanoidRootPart")
+				local humanoid = pl.Character:FindFirstChildOfClass("Humanoid")
+				if hrp and humanoid and humanoid.Health > 0 then
+					local worldDist = (hrp.Position - Camera.CFrame.Position).Magnitude
+					if worldDist <= MAX_HIGHLIGHT_DISTANCE then
+						-- チーム判定
+						local color = isEnemy(pl) and Color3.new(1,0,0) or Color3.new(0,1,0)
+						local h = ensureHighlight(pl.Character, color)
+						activeHighlights[pl] = h
+						seen[pl] = true
+					end
+				end
+			end
+		end
+		-- 使われてないハイライトを削除
+		for pl, _ in pairs(activeHighlights) do
+			if not seen[pl] then clearHighlight(pl) end
+		end
+	else
+		-- ESP無効なら全部消す
+		for pl,_ in pairs(activeHighlights) do clearHighlight(pl) end
+	end
+
+	-- 中央に近い敵を検出してクロスヘアを反応させる（AIMサポート表示）
+	local best = getClosestToCenter()
+	if best and best.distPixels <= AIM_RADIUS_PIXELS and guideEnabled then
+		-- 狙えている：クロスの色を赤にして小さなテキストを表示（攻撃はしない）
+		if not aimOn then
+			aimOn = true
+		end
+		-- 色変化（例：赤）
+		rainbowStroke.Color = Color3.new(1,0.35,0.35)
+		-- パネルに情報表示（ターゲット名・距離）
+		title.Text = ("Aim Support  — 対象: %s (%.0f)"):format(best.player.Name, best.worldDist)
+	else
+		if aimOn then aimOn = false end
+		-- 元に戻す
+		title.Text = "Aim Support"
+	end
 end)
 
--- スクリプト終了時にクリーンアップする関数
-local function cleanupAll()
-	for pl,_ in pairs(activeHighlights) do
-		clearHighlightForPlayer(pl)
-	end
-	-- UI は PlayerGui にあるので破棄しておく
-	if screenGui and screenGui.Parent then
-		screenGui:Destroy()
-	end
-end
-
--- プレイヤーのキャラがリスポーンしたら何らかの調整が必要ならここで
-player.CharacterAdded:Connect(function(char)
-	-- 前のハイライトが残ってたらクリア
-	for pl,_ in pairs(activeHighlights) do
-		clearHighlightForPlayer(pl)
-	end
-end)
-
--- 終了ハンドラ（ゲーム終了時等）
-game:BindToClose(function()
-	cleanupAll()
-end)
-
--- 最低限の注意書き表示（最初のみ）
+-- 初期表示ヒント（数秒）
 do
-	local hint = Instance.new("TextLabel")
-	hint.Name = "Hint"
-	hint.Size = UDim2.new(0, 200, 0, 28)
-	hint.Position = UDim2.new(0, 10, 1, -38)
-	hint.BackgroundTransparency = 0.5
+	local hint = Instance.new("TextLabel", uiContainer)
+	hint.Size = UDim2.new(0, 260, 0, 26)
+	hint.Position = UDim2.new(0, 8, 0, 156)
+	hint.BackgroundTransparency = 0.6
 	hint.BackgroundColor3 = Color3.fromRGB(0,0,0)
-	hint.TextColor3 = Color3.fromRGB(255,255,255)
-	hint.Text = "Aim Support UI loaded (表示のみ)"
-	hint.Font = Enum.Font.SourceSans
+	hint.TextColor3 = Color3.new(1,1,1)
+	hint.Text = "表示のみ — 自動射撃・自動照準は含まれません"
+	hint.Font = Enum.Font.Gotham
 	hint.TextSize = 14
-	hint.Parent = mainFrame
-	delay(3, function()
+	delay(4, function()
 		if hint and hint.Parent then hint:Destroy() end
 	end)
 end
+
+-- クリーンアップ（プレイヤーが離れたらHighlight除去）
+Players.PlayerRemoving:Connect(function(pl)
+	if activeHighlights[pl] then clearHighlight(pl) end
+end)
+
+-- キャラ切替時に古いハイライトをクリア
+LocalPlayer.CharacterAdded:Connect(function()
+	for pl,_ in pairs(activeHighlights) do clearHighlight(pl) end
+end)
+
+-- 終了時の削除バインド
+game:BindToClose(function()
+	for pl,_ in pairs(activeHighlights) do clearHighlight(pl) end
+	if screenGui and screenGui.Parent then screenGui:Destroy() end
+end)
+
+-- 最後に注意：
+-- - このスクリプトは視覚補助（UI/Highlight/狙えてるかの判定）だけで、自動発砲や自動ターゲット操作は一切行いません。
+-- - 一部ゲームでは Highlight の作成を禁止していたり、サーバ側でブロックされることがあります（その場合は Billboards を代替で用意可能）。
+-- - 必要なら 「壁越しでも色を薄くする」「HUDを小型化する」「Billboard代替」を追加するよ。要るもの教えて。
+
