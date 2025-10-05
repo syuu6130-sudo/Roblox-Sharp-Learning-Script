@@ -1,4 +1,4 @@
--- TPS Aim & Attack Support 完全版（ドラッグ対応）
+-- TPS Aim & Attack Support 完全版
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -9,7 +9,6 @@ local playerGui = LocalPlayer:WaitForChild("PlayerGui")
 -- ===== 設定 =====
 local MAX_HIGHLIGHT_DISTANCE = 300
 local AIM_RADIUS_PIXELS = 80
-local UPDATE_INTERVAL = 0.03
 
 -- ===== ScreenGui =====
 local screenGui = Instance.new("ScreenGui")
@@ -204,7 +203,6 @@ end
 -- ===== 中央に近い敵取得 =====
 local function getClosestToCenter()
 	local cam = Camera
-	if not cam then return nil end
 	local vs = cam.ViewportSize
 	local center = Vector2.new(vs.X/2,vs.Y/2)
 	local best=nil
@@ -251,7 +249,7 @@ RunService.RenderStepped:Connect(function()
 	local scale = 1 + 0.05*math.sin(tick()*2)
 	local size = math.clamp(base*scale,60,240)
 	rainbow.Size = UDim2.new(0,size,0,size)
-	
+
 	-- ESP更新
 	local seen={}
 	for _,pl in ipairs(Players:GetPlayers()) do
@@ -268,7 +266,7 @@ RunService.RenderStepped:Connect(function()
 	end
 	for pl,_ in pairs(activeHighlights) do
 		if not seen[pl] then
-			if activeHighlights[pl] then activeHighlights[pl]:Destroy() end
+			if activeHighlights[pl] then activeHighlights[pl]:Destroy() en
 			activeHighlights[pl]=nil
 		end
 	end
